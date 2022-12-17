@@ -415,7 +415,7 @@ func DefaultBot(modes ...Mode) *Bot {
 	// 心跳回调函数
 	// 默认的行为打印SyncCheckResponse
 	bot.SyncCheckCallback = func(resp SyncCheckResponse) {
-		log.Printf("RetCode:%s  Selector:%s", resp.RetCode, resp.Selector)
+		//log.Printf("RetCode:%s  Selector:%s", resp.RetCode, resp.Selector)
 	}
 	return bot
 }
