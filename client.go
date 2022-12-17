@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"strconv"
@@ -39,21 +40,21 @@ func (u UserAgentHook) AfterRequest(response *http.Response, err error) {}
 type Client struct {
 	HttpHooks HttpHooks
 	*http.Client
-	Domain        WechatDomain
-	mode          Mode
-	mu            sync.Mutex
-	MaxRetryTimes int
-	cookies       map[string][]*http.Cookie
+	Domain  WechatDomain
+	mode    Mode
+	mu      sync.Mutex
+	cookies map[string][]*http.Cookie
 }
 
 func NewClient() *Client {
+	jar, _ := cookiejar.New(nil)
 	timeout := 30 * time.Second
 	return &Client{
 		Client: &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
-			Jar:     newCookieJar(),
+			Jar:     jar,
 			Timeout: timeout,
 		}}
 }
@@ -63,13 +64,14 @@ func NewClient() *Client {
 func DefaultClient() *Client {
 	client := NewClient()
 	client.AddHttpHook(UserAgentHook{})
-	client.MaxRetryTimes = 5
 	return client
 }
 
 func (c *Client) AddHttpHook(hooks ...HttpHook) {
 	c.HttpHooks = append(c.HttpHooks, hooks...)
 }
+
+const maxRetry = 2
 
 func (c *Client) do(req *http.Request) (*http.Response, error) {
 	for _, hook := range c.HttpHooks {
@@ -79,7 +81,7 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 		resp *http.Response
 		err  error
 	)
-	for i := 0; i < c.MaxRetryTimes; i++ {
+	for i := 0; i < maxRetry; i++ {
 		resp, err = c.Client.Do(req)
 		if err == nil {
 			break
@@ -94,15 +96,30 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 	return resp, err
 }
 
+func (c *Client) setCookie(resp *http.Response) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cookies := resp.Cookies()
+	if c.cookies == nil {
+		c.cookies = make(map[string][]*http.Cookie)
+	}
+	path := fmt.Sprintf("%s://%s%s", resp.Request.URL.Scheme, resp.Request.URL.Host, resp.Request.URL.Path)
+	c.cookies[path] = cookies
+}
+
 // Do 抽象Do方法,将所有的有效的cookie存入Client.cookies
 // 方便热登陆时获取
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
-	return c.do(req)
+	resp, err := c.do(req)
+	if err == nil {
+		c.setCookie(resp)
+	}
+	return resp, err
 }
 
-// GetCookieJar 获取当前client的所有的有效的client
-func (c *Client) GetCookieJar() *Jar {
-	return fromCookieJar(c.Client.Jar)
+// GetCookieMap 获取当前client的所有的有效的client
+func (c *Client) GetCookieMap() map[string][]*http.Cookie {
+	return c.cookies
 }
 
 // GetLoginUUID 获取登录的uuid
@@ -197,12 +214,12 @@ func (c *Client) SyncCheck(request *BaseRequest, info *LoginInfo, response *WebI
 }
 
 // WebWxGetContact 获取联系人信息
-func (c *Client) WebWxGetContact(info *LoginInfo, reqs int64) (*http.Response, error) {
+func (c *Client) WebWxGetContact(info *LoginInfo) (*http.Response, error) {
 	path, _ := url.Parse(c.Domain.BaseHost() + webwxgetcontact)
 	params := url.Values{}
 	params.Add("r", strconv.FormatInt(time.Now().UnixNano()/1e6, 10))
 	params.Add("skey", info.SKey)
-	params.Add("seq", strconv.FormatInt(reqs, 10))
+	params.Add("req", "0")
 	path.RawQuery = params.Encode()
 	req, _ := http.NewRequest(http.MethodGet, path.String(), nil)
 	return c.Do(req)

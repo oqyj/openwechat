@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"sync"
@@ -72,45 +72,41 @@ func (b *Bot) GetCurrentUser() (*Self, error) {
 //	Storage := NewJsonFileHotReloadStorage("Storage.json")
 //	err := bot.HotLogin(Storage, true)
 //	fmt.Println(err)
-func (b *Bot) HotLogin(storage HotReloadStorage, retries ...bool) error {
-	err := b.hotLogin(storage)
-	// 判断是否为需要重新登录
-	if errors.Is(err, ErrInvalidStorage) {
+func (b *Bot) HotLogin(storage HotReloadStorage, retry ...bool) error {
+	b.hotReloadStorage = storage
+
+	var err error
+
+	// 如果load出错了,就执行正常登陆逻辑
+	// 第一次没有数据load都会出错的
+	item, err := NewHotReloadStorageItem(storage)
+
+	if err != nil {
 		return b.Login()
 	}
-	if err != nil {
-		if len(retries) > 0 && retries[0] {
-			retErr, ok := err.(Ret)
-			if !ok {
-				return err
-			}
-			// TODO add more error code handle here
-			switch retErr {
-			case cookieInvalid:
-				return b.Login()
-			}
-			return err
-		}
+
+	if err = b.hotLoginInit(item); err != nil {
+		return err
+	}
+
+	// 如果webInit出错,则说明可能身份信息已经失效
+	// 如果retry为True的话,则进行正常登陆
+	if err = b.WebInit(); err != nil && (len(retry) > 0 && retry[0]) {
+		err = b.Login()
 	}
 	return err
 }
 
-func (b *Bot) hotLogin(storage HotReloadStorage) error {
-	b.hotReloadStorage = storage
-	var item HotReloadStorageItem
-	err := json.NewDecoder(storage).Decode(&item)
-	if err != nil {
-		return err
-	}
-	if err = b.hotLoginInit(&item); err != nil {
-		return err
-	}
-	return b.WebInit()
-}
-
 // 热登陆初始化
 func (b *Bot) hotLoginInit(item *HotReloadStorageItem) error {
-	b.Caller.Client.Jar = item.Jar.AsCookieJar()
+	cookies := item.Cookies
+	for u, ck := range cookies {
+		path, err := url.Parse(u)
+		if err != nil {
+			return err
+		}
+		b.Caller.Client.Jar.SetCookies(path, ck)
+	}
 	b.Storage.LoginInfo = item.LoginInfo
 	b.Storage.Request = item.BaseRequest
 	b.Caller.Client.Domain = item.WechatDomain
@@ -121,6 +117,7 @@ func (b *Bot) hotLoginInit(item *HotReloadStorageItem) error {
 // Login 用户登录
 func (b *Bot) Login() error {
 	uuid, err := b.Caller.GetLoginUUID()
+	b.uuid = uuid
 	if err != nil {
 		return err
 	}
@@ -297,6 +294,11 @@ func (b *Bot) syncCheck() error {
 
 // 当获取消息发生错误时, 默认的错误处理行为
 func (b *Bot) stopSyncCheck(err error) bool {
+	if IsNetworkError(err) {
+		log.Println(err)
+		// 继续监听
+		return true
+	}
 	b.err = err
 	b.Exit()
 	return false
@@ -351,21 +353,16 @@ func (b *Bot) DumpHotReloadStorage() error {
 	if b.hotReloadStorage == nil {
 		return errors.New("HotReloadStorage can not be nil")
 	}
-	return b.DumpTo(b.hotReloadStorage)
-}
-
-// DumpTo 将热登录需要的数据写入到指定的 io.Writer 中
-// 注: 写之前最好先清空之前的数据
-func (b *Bot) DumpTo(writer io.Writer) error {
-	cookies := b.Caller.Client.GetCookieJar()
+	cookies := b.Caller.Client.GetCookieMap()
 	item := HotReloadStorageItem{
 		BaseRequest:  b.Storage.Request,
-		Jar:          cookies,
+		Cookies:      cookies,
 		LoginInfo:    b.Storage.LoginInfo,
 		WechatDomain: b.Caller.Client.Domain,
 		UUID:         b.uuid,
 	}
-	return json.NewEncoder(writer).Encode(item)
+
+	return json.NewEncoder(b.hotReloadStorage).Encode(item)
 }
 
 // OnLogin is a setter for LoginCallBack
@@ -384,12 +381,11 @@ func (b *Bot) OnLogout(f func(bot *Bot)) {
 }
 
 // NewBot Bot的构造方法
-// 接收外部的 context.Context，用于控制Bot的存活
-func NewBot(c context.Context) *Bot {
+func NewBot() *Bot {
 	caller := DefaultCaller()
 	// 默认行为为桌面模式
 	caller.Client.SetMode(Normal)
-	ctx, cancel := context.WithCancel(c)
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Bot{Caller: caller, Storage: &Storage{}, context: ctx, cancel: cancel}
 }
 
@@ -398,7 +394,7 @@ func NewBot(c context.Context) *Bot {
 //
 //	bot := openwechat.DefaultBot(openwechat.Desktop)
 func DefaultBot(modes ...Mode) *Bot {
-	bot := NewBot(context.Background())
+	bot := NewBot()
 	if len(modes) > 0 {
 		bot.Caller.Client.SetMode(modes[0])
 	}

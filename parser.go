@@ -47,6 +47,14 @@ func getWebWxDataTicket(cookies []*http.Cookie) string {
 	return ""
 }
 
+func getTotalDuration(delay ...time.Duration) time.Duration {
+	var total time.Duration
+	for _, d := range delay {
+		total += d
+	}
+	return total
+}
+
 // GetFileContentType 获取文件上传的类型
 func GetFileContentType(file multipart.File) (string, error) {
 	data := make([]byte, 512)
@@ -73,10 +81,9 @@ const (
 // 微信匹配文件类型策略
 func getMessageType(filename string) string {
 	ext := getFileExt(filename)
-	if _, ok := imageType[ext]; ok {
+	if imageType[ext] {
 		return pic
-	}
-	if ext == videoType {
+	} else if ext == videoType {
 		return video
 	}
 	return doc

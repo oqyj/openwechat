@@ -15,6 +15,7 @@ import (
 // 上层模块可以直接获取封装后的请求结果
 type Caller struct {
 	Client *Client
+	path   *url.URL
 }
 
 // NewCaller Constructor for Caller
@@ -154,32 +155,19 @@ func (c *Caller) SyncCheck(request *BaseRequest, info *LoginInfo, response *WebI
 
 // WebWxGetContact 获取所有的联系人
 func (c *Caller) WebWxGetContact(info *LoginInfo) (Members, error) {
-	var members Members
-	var reqs int64
-	for {
-		resp, err := c.Client.WebWxGetContact(info, reqs)
-		if err != nil {
-			return nil, err
-		}
-		var item WebWxContactResponse
-		if err = scanJson(resp.Body, &item); err != nil {
-			_ = resp.Body.Close()
-			return nil, err
-		}
-		if err = resp.Body.Close(); err != nil {
-			return nil, err
-		}
-		if !item.BaseResponse.Ok() {
-			return nil, item.BaseResponse.Err()
-		}
-		members = append(members, item.MemberList...)
-
-		if item.Seq == 0 || item.Seq == reqs {
-			break
-		}
-		reqs = item.Seq
+	resp, err := c.Client.WebWxGetContact(info)
+	if err != nil {
+		return nil, err
 	}
-	return members, nil
+	defer func() { _ = resp.Body.Close() }()
+	var item WebWxContactResponse
+	if err := scanJson(resp.Body, &item); err != nil {
+		return nil, err
+	}
+	if !item.BaseResponse.Ok() {
+		return nil, item.BaseResponse.Err()
+	}
+	return item.MemberList, nil
 }
 
 // WebWxBatchGetContact 获取联系人的详情

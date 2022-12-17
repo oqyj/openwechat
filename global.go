@@ -109,12 +109,13 @@ const (
 // errors
 var (
 	ErrNoSuchUserFoundError = errors.New("no such user found")
+	ErrMissLocationHeader   = errors.New("301 response missing Location header")
+	ErrLoginForbiddenError  = errors.New("login forbidden")
 	ErrLoginTimeout         = errors.New("login timeout")
 )
 
 // ALL 跟search函数搭配
-//
-//	friends.Search(openwechat.ALL, )
+//      friends.Search(openwechat.ALL, )
 const ALL = 0
 
 // 性别
@@ -136,11 +137,11 @@ const (
 
 const TimeFormat = "Mon Jan 02 2006 15:04:05 GMT+0800 (中国标准时间)"
 
-var imageType = map[string]struct{}{
-	"bmp":  {},
-	"png":  {},
-	"jpeg": {},
-	"jpg":  {},
+var imageType = map[string]bool{
+	"bmp":  true,
+	"png":  true,
+	"jpeg": true,
+	"jpg":  true,
 }
 
 var videoType = "mp4"

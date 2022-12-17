@@ -171,9 +171,7 @@ bot.MessageHandler = func(msg *openwechat.Message) {
 dispatcher := openwechat.NewMessageMatchDispatcher()
 
 // 只处理消息类型为文本类型的消息
-dispatcher.OnText(func(ctx *openwechat.MessageContext){
-	msg := ctx.Message
-	fmt.Println("Text: ", msg.Content)
+dispatcher.OnText(func(msg *Message){
 	msg.ReplyText("hello")
 })
 

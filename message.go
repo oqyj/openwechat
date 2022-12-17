@@ -63,20 +63,8 @@ func (m *Message) Sender() (*User, error) {
 	if m.FromUserName == m.Bot.self.User.UserName {
 		return m.Bot.self.User, nil
 	}
-	// 首先尝试从缓存里面查找, 如果没有找到则从服务器获取
-	members, err := m.Bot.self.Members()
-	if err != nil {
-		return nil, err
-	}
-	user, exist := members.GetByUserName(m.FromUserName)
-	if !exist {
-		// 找不到, 从服务器获取
-		user = &User{Self: m.Bot.self, UserName: m.FromUserName}
-		err = user.Detail()
-	}
-	if m.IsSendByGroup() && len(user.MemberList) == 0 {
-		err = user.Detail()
-	}
+	user := &User{Self: m.Bot.self, UserName: m.FromUserName}
+	err := user.Detail()
 	return user, err
 }
 
@@ -94,15 +82,22 @@ func (m *Message) SenderInGroup() (*User, error) {
 		}
 		return nil, errors.New("can not found sender from system message")
 	}
-	user, err := m.Sender()
+	group, err := m.Sender()
 	if err != nil {
 		return nil, err
 	}
-	if user.IsFriend() {
-		return user, nil
+	if err := group.Detail(); err != nil {
+		return nil, err
 	}
-	group := &Group{user}
-	return group.SearchMemberByUsername(m.senderInGroupUserName)
+	if group.IsFriend() {
+		return group, nil
+	}
+	users := group.MemberList.SearchByUserName(1, m.senderInGroupUserName)
+	if users == nil {
+		return nil, ErrNoSuchUserFoundError
+	}
+	users.init(m.Bot.self)
+	return users.First(), nil
 }
 
 // Receiver 获取消息的接收者
@@ -132,7 +127,7 @@ func (m *Message) Receiver() (*User, error) {
 		}
 		return users.First().User, nil
 	} else {
-		user, exist := m.Bot.self.MemberList.GetByUserName(m.ToUserName)
+		user, exist := m.Bot.self.MemberList.GetByRemarkName(m.ToUserName)
 		if !exist {
 			return nil, ErrNoSuchUserFoundError
 		}
@@ -469,14 +464,12 @@ func (m *Message) init(bot *Bot) {
 								displayName = receiver.First().NickName
 							}
 							var atFlag string
-							msgContent := FormatEmoji(m.Content)
-							atName := FormatEmoji(displayName)
-							if strings.Contains(msgContent, "\u2005") {
-								atFlag = "@" + atName + "\u2005"
+							if strings.Contains(m.Content, "\u2005") {
+								atFlag = "@" + displayName + "\u2005"
 							} else {
-								atFlag = "@" + atName
+								atFlag = "@" + displayName + " "
 							}
-							m.isAt = strings.Contains(msgContent, atFlag) || strings.HasSuffix(msgContent, atFlag)
+							m.isAt = strings.Contains(m.Content, atFlag) || strings.HasSuffix(m.Content, atFlag)
 						}
 					}
 				}
@@ -645,7 +638,7 @@ func (s *SentMessage) CanRevoke() bool {
 		return false
 	}
 	start := time.Unix(i/10000000, 0)
-	return time.Since(start) < 2*time.Minute
+	return time.Now().Sub(start) < time.Minute*2
 }
 
 // ForwardToFriends 转发该消息给好友
@@ -795,7 +788,7 @@ func (m *Message) IsPaiYiPai() bool {
 
 // IsJoinGroup 判断是否有人加入了群聊
 func (m *Message) IsJoinGroup() bool {
-	return m.IsSystem() && (strings.Contains(m.Content, "加入了群聊") || strings.Contains(m.Content, "分享的二维码加入群聊")) && m.IsSendByGroup()
+	return m.IsSystem() && strings.Contains(m.Content, "加入了群聊") && m.IsSendByGroup()
 }
 
 // IsTickled 判断消息是否为拍一拍

@@ -49,7 +49,7 @@ type User struct {
 
 	MemberList Members
 
-	Self *Self `json:"-"`
+	Self *Self
 }
 
 // implement fmt.Stringer
@@ -58,18 +58,8 @@ func (u *User) String() string {
 }
 
 // GetAvatarResponse 获取用户头像
-func (u *User) GetAvatarResponse() (resp *http.Response, err error) {
-	for i := 0; i < 3; i++ {
-		resp, err = u.Self.Bot.Caller.Client.WebWxGetHeadImg(u)
-		if err != nil {
-			return nil, err
-		}
-		// 这里存在 ContentLength 为0的情况，需要重试
-		if resp.ContentLength > 0 {
-			break
-		}
-	}
-	return resp, err
+func (u *User) GetAvatarResponse() (*http.Response, error) {
+	return u.Self.Bot.Caller.Client.WebWxGetHeadImg(u)
 }
 
 // SaveAvatar 下载用户头像
@@ -78,7 +68,7 @@ func (u *User) SaveAvatar(filename string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = file.Close() }()
+	defer file.Close()
 	return u.SaveAvatarWithWriter(file)
 }
 
@@ -87,12 +77,21 @@ func (u *User) SaveAvatarWithWriter(writer io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// 这里获取头像的响应有时可能会异常
+	// 一般为网路原因
+	// 再去请求一次即可解决
+	if resp.ContentLength == 0 && resp.Header.Get("Content-Type") == "image/jpeg" {
+		resp, err = u.GetAvatarResponse()
+		if err != nil {
+			return err
+		}
+	}
 	// 写文件前判断下 content length 是否是 0，不然保存的头像会出现
 	// image not loaded  try to open it externally to fix format problem 问题
 	if resp.ContentLength == 0 {
-		return errors.New("get avatar response content length is 0")
+		return fmt.Errorf("get avatar response content length is 0")
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 	_, err = io.Copy(writer, resp.Body)
 	return err
 }
@@ -214,12 +213,23 @@ func (s *Self) updateMembers() error {
 
 // FileHelper 获取文件传输助手对象，封装成Friend返回
 //
-//	fh := self.FileHelper() // or fh := openwechat.NewFriendHelper(self)
-func (s *Self) FileHelper() *Friend {
-	if s.fileHelper == nil {
-		s.fileHelper = NewFriendHelper(s)
+//	fh, err := self.FileHelper() // or fh := openwechat.NewFriendHelper(self)
+func (s *Self) FileHelper() (*Friend, error) {
+	// 如果缓存里有，直接返回，否则去联系人里面找
+	if s.fileHelper != nil {
+		return s.fileHelper, nil
 	}
-	return s.fileHelper
+	members, err := s.Members()
+	if err != nil {
+		return nil, err
+	}
+	users := members.SearchByUserName(1, "filehelper")
+	if users == nil {
+		s.fileHelper = NewFriendHelper(s)
+	} else {
+		s.fileHelper = &Friend{users.First()}
+	}
+	return s.fileHelper, nil
 }
 
 // Friends 获取所有的好友
@@ -766,8 +776,10 @@ func newFriend(username string, self *Self) *Friend {
 	return &Friend{&User{UserName: username, Self: self}}
 }
 
-// NewFriendHelper 创建一个文件传输助手
+// NewFriendHelper 这里为了兼容Desktop版本找不到文件传输助手的问题
 // 文件传输助手的微信身份标识符永远是filehelper
+// 这种形式的对象可能缺少一些其他属性
+// 但是不影响发送信息的功能
 func NewFriendHelper(self *Self) *Friend {
 	return newFriend("filehelper", self)
 }

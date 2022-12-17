@@ -1,5 +1,7 @@
 package openwechat
 
+import "errors"
+
 type Ret int
 
 const (
@@ -26,5 +28,5 @@ func (b BaseResponse) Err() error {
 	if b.Ok() {
 		return nil
 	}
-	return b.Ret
+	return errors.New(b.Ret.String())
 }

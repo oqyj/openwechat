@@ -131,7 +131,7 @@ type WebWxSyncResponse struct {
 
 type WebWxContactResponse struct {
 	MemberCount  int
-	Seq          int64
+	Seq          int
 	BaseResponse BaseResponse
 	MemberList   []*User
 }
